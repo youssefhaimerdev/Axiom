@@ -2,11 +2,19 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Head from 'next/head'
 import styles from '../styles/Home.module.css'
 
-const WELCOME = "AXIOM online. All systems nominal. What do you need?"
+const WELCOME = "AXIOM online. All systems nominal. How can I assist you?"
+const SILENCE_DELAY = 1500
+const PASSWORD = "AXIOM123"
 
 export default function Home() {
+  // Auth
+  const [unlocked, setUnlocked] = useState(false)
+  const [pwInput, setPwInput] = useState('')
+  const [pwError, setPwError] = useState('')
+  const [pwShake, setPwShake] = useState(false)
+
+  // Core
   const [apiKey, setApiKey] = useState('')
-  const [keyInput, setKeyInput] = useState('')
   const [keySaved, setKeySaved] = useState(false)
   const [messages, setMessages] = useState([])
   const [transcript, setTranscript] = useState('')
@@ -14,378 +22,494 @@ export default function Home() {
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [isThinking, setIsThinking] = useState(false)
   const [status, setStatus] = useState('STANDBY')
+  const [conversationMode, setConversationMode] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [orbScale, setOrbScale] = useState(1)
+  const [particles, setParticles] = useState([])
+
+  // Voice
   const [voices, setVoices] = useState([])
   const [selectedVoice, setSelectedVoice] = useState(null)
-  const [orbScale, setOrbScale] = useState(1)
+  const [voiceRate, setVoiceRate] = useState(1.0)
 
+  // Settings inputs
+  const [keyInput, setKeyInput] = useState('')
+  const [pwChangeInput, setPwChangeInput] = useState('')
+  const [pwChangeDone, setPwChangeDone] = useState(false)
+
+  // Refs
   const recognitionRef = useRef(null)
   const chatEndRef = useRef(null)
-  const interimRef = useRef('')
   const finalRef = useRef('')
   const orbAnimRef = useRef(null)
+  const silenceTimerRef = useRef(null)
+  const convRef = useRef(false)
+  const listeningRef = useRef(false)
+  const speakingRef = useRef(false)
+  const thinkingRef = useRef(false)
+  const messagesRef = useRef([])
+  const apiKeyRef = useRef('')
+  const voiceRef = useRef(null)
+  const voiceRateRef = useRef(1.0)
+  const sendRef = useRef(null)
+  const passwordRef = useRef(PASSWORD)
 
+  useEffect(() => { convRef.current = conversationMode }, [conversationMode])
+  useEffect(() => { listeningRef.current = isListening }, [isListening])
+  useEffect(() => { speakingRef.current = isSpeaking }, [isSpeaking])
+  useEffect(() => { thinkingRef.current = isThinking }, [isThinking])
+  useEffect(() => { messagesRef.current = messages }, [messages])
+  useEffect(() => { voiceRef.current = selectedVoice }, [selectedVoice])
+  useEffect(() => { voiceRateRef.current = voiceRate }, [voiceRate])
+
+  // Boot: load persisted data
   useEffect(() => {
-    const saved = localStorage.getItem('axiom_key')
-    if (saved) {
-      setApiKey(saved)
-      setKeySaved(true)
-      setKeyInput('••••••••••••••••••••••••')
-    }
+    // Check if already unlocked this session
+    const sessionUnlocked = sessionStorage.getItem('axiom_unlocked')
+    if (sessionUnlocked === '1') setUnlocked(true)
+
+    const savedKey = localStorage.getItem('axiom_key')
+    if (savedKey) { setApiKey(savedKey); apiKeyRef.current = savedKey; setKeySaved(true); setKeyInput('••••••••••••••••••••••••') }
+
+    const savedPw = localStorage.getItem('axiom_pw')
+    if (savedPw) passwordRef.current = savedPw
+
+    const savedMsgs = localStorage.getItem('axiom_history')
+    if (savedMsgs) { try { const m = JSON.parse(savedMsgs); setMessages(m); messagesRef.current = m } catch {} }
+
+    const savedRate = localStorage.getItem('axiom_rate')
+    if (savedRate) { setVoiceRate(parseFloat(savedRate)); voiceRateRef.current = parseFloat(savedRate) }
+
+    // Generate particles
+    const pts = Array.from({ length: 28 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: 1 + Math.random() * 2,
+      dur: 6 + Math.random() * 10,
+      delay: Math.random() * 8,
+      opacity: 0.15 + Math.random() * 0.35,
+    }))
+    setParticles(pts)
   }, [])
 
+  // Persist messages
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isThinking])
+    if (messages.length > 0) localStorage.setItem('axiom_history', JSON.stringify(messages.slice(-40)))
+  }, [messages])
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isThinking])
 
   useEffect(() => {
-    const loadVoices = () => {
+    const load = () => {
       const v = window.speechSynthesis.getVoices()
       setVoices(v)
-      const preferred = v.find(x =>
-        x.name.toLowerCase().includes('daniel') ||
-        x.name.toLowerCase().includes('google uk english male') ||
-        x.name.toLowerCase().includes('male')
-      ) || v[0]
+      const savedVoiceName = localStorage.getItem('axiom_voice')
+      const preferred = (savedVoiceName && v.find(x => x.name === savedVoiceName))
+        || v.find(x => x.name.toLowerCase().includes('daniel'))
+        || v.find(x => x.name.toLowerCase().includes('google uk english male'))
+        || v[0]
       setSelectedVoice(preferred)
+      voiceRef.current = preferred
     }
-    window.speechSynthesis.onvoiceschanged = loadVoices
-    loadVoices()
+    window.speechSynthesis.onvoiceschanged = load
+    load()
   }, [])
 
-  const animateOrb = useCallback((speaking) => {
+  const animateOrb = useCallback((active) => {
     if (orbAnimRef.current) cancelAnimationFrame(orbAnimRef.current)
-    if (!speaking) { setOrbScale(1); return }
-    const animate = () => {
-      setOrbScale(1 + Math.random() * 0.15)
-      orbAnimRef.current = requestAnimationFrame(() => {
-        setTimeout(animate, 80 + Math.random() * 80)
-      })
+    if (!active) { setOrbScale(1); return }
+    const go = () => {
+      setOrbScale(1 + Math.random() * 0.18)
+      orbAnimRef.current = requestAnimationFrame(() => setTimeout(go, 70 + Math.random() * 90))
     }
-    animate()
+    go()
   }, [])
 
-  const speak = useCallback((text) => {
-    window.speechSynthesis.cancel()
-    const utt = new SpeechSynthesisUtterance(text)
-    if (selectedVoice) utt.voice = selectedVoice
-    utt.rate = 1.0
-    utt.pitch = 0.85
-    utt.volume = 1
-    setIsSpeaking(true)
-    setStatus('TRANSMITTING')
-    animateOrb(true)
-    utt.onend = () => {
-      setIsSpeaking(false)
-      setStatus('STANDBY')
-      animateOrb(false)
-    }
-    utt.onerror = () => {
-      setIsSpeaking(false)
-      setStatus('STANDBY')
-      animateOrb(false)
-    }
-    window.speechSynthesis.speak(utt)
-  }, [selectedVoice, animateOrb])
+  const clearSilence = () => { if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null } }
 
-  const detectWeatherQuery = (text) => {
-    const m = text.match(/weather\s+(?:in\s+|for\s+|at\s+)?([a-zA-Z\s,]+?)(?:\?|$)/i)
-    return m ? m[1].trim() : null
-  }
-
-  const sendMessage = useCallback(async (text) => {
-    if (!text.trim()) return
-    if (!apiKey) {
-      setStatus('NO API KEY')
-      return
-    }
-
-    const userMsg = { role: 'user', content: text }
-    setMessages(prev => [...prev, userMsg])
-    setTranscript('')
-    setIsThinking(true)
-    setStatus('PROCESSING')
-
-    let weatherData = null
-    const city = detectWeatherQuery(text)
-    if (city) {
-      setStatus('FETCHING WEATHER')
-      try {
-        const wRes = await fetch(`/api/weather?city=${encodeURIComponent(city)}`)
-        const wJson = await wRes.json()
-        if (!wJson.error) weatherData = wJson.summary
-      } catch {}
-    }
-
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-groq-key': apiKey,
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMsg].slice(-12),
-          weatherData,
-        }),
-      })
-      const data = await res.json()
-      setIsThinking(false)
-
-      if (data.error) {
-        setStatus('ERROR')
-        setMessages(prev => [...prev, { role: 'assistant', content: `System error: ${data.error}` }])
-        return
-      }
-
-      const reply = data.reply
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
-      speak(reply)
-    } catch {
-      setIsThinking(false)
-      setStatus('CONNECTION LOST')
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection to Groq lost. Check network.' }])
-    }
-  }, [apiKey, messages, speak])
-
-  const setupRecognition = useCallback(() => {
+  const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) return null
+    if (!SR) { setStatus('NO MIC ACCESS'); return }
+    if (recognitionRef.current) {
+      recognitionRef.current._active = false
+      try { recognitionRef.current.stop() } catch {}
+      recognitionRef.current = null
+    }
+    finalRef.current = ''
+    setTranscript('')
+    clearSilence()
     const r = new SR()
-    r.continuous = true
-    r.interimResults = true
-    r.lang = 'en-US'
+    r.continuous = true; r.interimResults = true; r.lang = 'en-US'; r._active = true
 
     r.onresult = (e) => {
-      let interim = ''
-      let final = finalRef.current
+      if (speakingRef.current) {
+        window.speechSynthesis.cancel()
+        speakingRef.current = false; setIsSpeaking(false); animateOrb(false)
+      }
+      let interim = '', final = finalRef.current
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) final += e.results[i][0].transcript + ' '
         else interim += e.results[i][0].transcript
       }
       finalRef.current = final
       setTranscript(final + interim)
+      clearSilence()
+      if (final.trim() || interim.trim()) {
+        silenceTimerRef.current = setTimeout(() => {
+          const text = finalRef.current.trim()
+          if (text && sendRef.current) {
+            if (recognitionRef.current) { recognitionRef.current._active = false; try { recognitionRef.current.stop() } catch {}; recognitionRef.current = null }
+            setIsListening(false); listeningRef.current = false; setStatus('PROCESSING')
+            sendRef.current(text); finalRef.current = ''; setTranscript('')
+          }
+        }, SILENCE_DELAY)
+      }
     }
-    r.onerror = () => { stopListening() }
-    r.onend = () => {
-      if (recognitionRef.current?._active) r.start()
-    }
-    return r
-  }, [])
-
-  const startListening = useCallback(() => {
-    if (isSpeaking) window.speechSynthesis.cancel()
-    finalRef.current = ''
-    interimRef.current = ''
-    setTranscript('')
-    const r = setupRecognition()
-    if (!r) { setStatus('NO MIC ACCESS'); return }
-    r._active = true
+    r.onerror = (e) => { if (e.error === 'no-speech' || e.error === 'aborted') return; setStatus('MIC ERROR'); r._active = false; setIsListening(false); listeningRef.current = false }
+    r.onend = () => { if (r._active && convRef.current) { try { r.start() } catch {} } }
     recognitionRef.current = r
-    r.start()
-    setIsListening(true)
-    setStatus('LISTENING')
-  }, [isSpeaking, setupRecognition])
+    try { r.start(); setIsListening(true); listeningRef.current = true; setStatus('LISTENING') } catch { setStatus('MIC ERROR') }
+  }, [animateOrb])
 
   const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current._active = false
-      recognitionRef.current.stop()
-      recognitionRef.current = null
-    }
-    setIsListening(false)
-    setStatus('STANDBY')
-    const text = finalRef.current.trim()
-    if (text) sendMessage(text)
-    finalRef.current = ''
-  }, [sendMessage])
+    clearSilence()
+    if (recognitionRef.current) { recognitionRef.current._active = false; try { recognitionRef.current.stop() } catch {}; recognitionRef.current = null }
+    setIsListening(false); listeningRef.current = false; finalRef.current = ''; setTranscript('')
+  }, [])
 
-  const toggleListening = () => {
-    if (isListening) stopListening()
-    else startListening()
+  const speak = useCallback((text, onDone) => {
+    window.speechSynthesis.cancel()
+    const utt = new SpeechSynthesisUtterance(text)
+    if (voiceRef.current) utt.voice = voiceRef.current
+    utt.rate = voiceRateRef.current; utt.pitch = 0.85; utt.volume = 1
+    setIsSpeaking(true); speakingRef.current = true; setStatus('TRANSMITTING'); animateOrb(true)
+    utt.onend = () => { setIsSpeaking(false); speakingRef.current = false; animateOrb(false); if (onDone) onDone() }
+    utt.onerror = () => { setIsSpeaking(false); speakingRef.current = false; animateOrb(false); if (onDone) onDone() }
+    window.speechSynthesis.speak(utt)
+  }, [animateOrb])
+
+  const detectWeather = (text) => {
+    const m = text.match(/weather\s+(?:in\s+|for\s+|at\s+)?([a-zA-Z\s,]+?)(?:\?|$)/i)
+    return m ? m[1].trim() : null
   }
 
-  const saveKey = () => {
+  const sendMessage = useCallback(async (text) => {
+    if (!text.trim() || !apiKeyRef.current) { if (!apiKeyRef.current) setStatus('NO API KEY'); return }
+    const userMsg = { role: 'user', content: text }
+    setMessages(prev => [...prev, userMsg]); setTranscript(''); setIsThinking(true); thinkingRef.current = true; setStatus('PROCESSING')
+
+    let weatherData = null
+    const city = detectWeather(text)
+    if (city) {
+      setStatus('FETCHING WEATHER')
+      try { const w = await fetch(`/api/weather?city=${encodeURIComponent(city)}`); const j = await w.json(); if (!j.error) weatherData = j.summary } catch {}
+    }
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-groq-key': apiKeyRef.current },
+        body: JSON.stringify({ messages: [...messagesRef.current, userMsg].slice(-16), weatherData }),
+      })
+      const data = await res.json()
+      setIsThinking(false); thinkingRef.current = false
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: `System error: ${data.error}` }])
+        setStatus('ERROR')
+        if (convRef.current) setTimeout(() => startListening(), 1200)
+        return
+      }
+      const reply = data.reply
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+      speak(reply, () => { setStatus('STANDBY'); if (convRef.current) setTimeout(() => startListening(), 350) })
+    } catch {
+      setIsThinking(false); thinkingRef.current = false; setStatus('CONNECTION LOST')
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Network unreachable. Check your connection.' }])
+      if (convRef.current) setTimeout(() => startListening(), 2500)
+    }
+  }, [speak, startListening])
+
+  useEffect(() => { sendRef.current = sendMessage }, [sendMessage])
+
+  const toggleConv = useCallback(() => {
+    if (convRef.current) {
+      setConversationMode(false); convRef.current = false
+      stopListening(); window.speechSynthesis.cancel()
+      setIsSpeaking(false); speakingRef.current = false; animateOrb(false); setStatus('STANDBY')
+    } else {
+      setConversationMode(true); convRef.current = true; startListening()
+    }
+  }, [startListening, stopListening, animateOrb])
+
+  const handleUnlock = () => {
+    if (pwInput === passwordRef.current) {
+      sessionStorage.setItem('axiom_unlocked', '1')
+      setUnlocked(true)
+    } else {
+      setPwError('ACCESS DENIED')
+      setPwShake(true)
+      setTimeout(() => { setPwShake(false); setPwError('') }, 1800)
+      setPwInput('')
+    }
+  }
+
+  const saveApiKey = () => {
     const k = keyInput.trim()
     if (!k || k.includes('•')) return
-    localStorage.setItem('axiom_key', k)
-    setApiKey(k)
-    setKeySaved(true)
+    localStorage.setItem('axiom_key', k); setApiKey(k); apiKeyRef.current = k; setKeySaved(true)
     setKeyInput('••••••••••••••••••••••••')
-    setStatus('KEY ACCEPTED')
-    setTimeout(() => {
-      setMessages([{ role: 'assistant', content: WELCOME }])
-      speak(WELCOME)
-    }, 300)
   }
 
-  const clearKey = () => {
-    localStorage.removeItem('axiom_key')
-    setApiKey('')
-    setKeyInput('')
-    setKeySaved(false)
-    setMessages([])
-    setStatus('STANDBY')
+  const clearHistory = () => {
+    setMessages([]); messagesRef.current = []; localStorage.removeItem('axiom_history')
+    window.speechSynthesis.cancel(); setIsSpeaking(false); speakingRef.current = false; animateOrb(false)
+    if (convRef.current) { setConversationMode(false); convRef.current = false; stopListening(); setStatus('STANDBY') }
   }
 
-  const statusColor = {
-    'STANDBY': '#3d5566',
-    'LISTENING': '#00e5ff',
-    'PROCESSING': '#ffb300',
-    'TRANSMITTING': '#00e5ff',
-    'FETCHING WEATHER': '#ffb300',
-    'KEY ACCEPTED': '#00ff88',
-    'ERROR': '#ff4444',
-    'CONNECTION LOST': '#ff4444',
-    'NO API KEY': '#ff4444',
-    'NO MIC ACCESS': '#ff4444',
-  }[status] || '#3d5566'
+  const savePassword = () => {
+    if (pwChangeInput.trim().length < 4) return
+    localStorage.setItem('axiom_pw', pwChangeInput.trim()); passwordRef.current = pwChangeInput.trim()
+    setPwChangeInput(''); setPwChangeDone(true); setTimeout(() => setPwChangeDone(false), 2000)
+  }
 
+  const statusColor = { 'STANDBY':'#2e4a5a','LISTENING':'#00e5ff','PROCESSING':'#ffb300','TRANSMITTING':'#00e5ff','FETCHING WEATHER':'#ffb300','KEY ACCEPTED':'#00ff88','ERROR':'#ff4455','CONNECTION LOST':'#ff4455','NO API KEY':'#ff4455','NO MIC ACCESS':'#ff4455','MIC ERROR':'#ff4455' }[status] || '#2e4a5a'
+
+  // ── PASSWORD GATE ──
+  if (!unlocked) return (
+    <>
+      <Head><title>AXIOM — LOCKED</title><meta name="viewport" content="width=device-width, initial-scale=1" /></Head>
+      <div className={styles.gateWrap}>
+        <div className={styles.gateBg} aria-hidden="true" />
+        <div className={styles.gateScanlines} aria-hidden="true" />
+        <div className={`${styles.gateCard} ${pwShake ? styles.shake : ''}`}>
+          <div className={styles.gateOrb} aria-hidden="true">
+            <div className={styles.gateOrbCore} />
+            <div className={styles.gateOrbRing} />
+          </div>
+          <h1 className={styles.gateTitle}>AXIOM</h1>
+          <p className={styles.gateSub}>SECURE AUTHENTICATION REQUIRED</p>
+          <div className={styles.gateInputRow}>
+            <input
+              type="password"
+              className={styles.gateInput}
+              value={pwInput}
+              onChange={e => setPwInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+              placeholder="ENTER ACCESS CODE"
+              autoFocus
+            />
+            <button className={styles.gateBtn} onClick={handleUnlock}>▶</button>
+          </div>
+          {pwError && <p className={styles.gateError}>{pwError}</p>}
+        </div>
+      </div>
+    </>
+  )
+
+  // ── MAIN APP ──
   return (
     <>
       <Head>
         <title>AXIOM</title>
-        <meta name="description" content="AXIOM — Advanced AI Assistant" />
+        <meta name="description" content="AXIOM — Personal AI Assistant" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23040608' stroke='%2300e5ff' stroke-width='1.5'/><circle cx='16' cy='16' r='5' fill='%2300e5ff' opacity='0.8'/></svg>" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23020508' stroke='%2300e5ff' stroke-width='1.5'/><circle cx='16' cy='16' r='5' fill='%2300e5ff' opacity='0.9'/></svg>" />
       </Head>
 
-      <div className={styles.container}>
-        {/* Background grid */}
-        <div className={styles.grid} aria-hidden="true" />
-        <div className={styles.gridFade} aria-hidden="true" />
+      <div className={styles.app}>
+        {/* ── BACKGROUND ── */}
+        <div className={styles.bgGrid} aria-hidden="true" />
+        <div className={styles.bgHex} aria-hidden="true" />
+        <div className={styles.bgGlow} aria-hidden="true" />
+        <div className={styles.scanlines} aria-hidden="true" />
+        <div className={styles.bgVignette} aria-hidden="true" />
+        {particles.map(p => (
+          <div key={p.id} className={styles.particle} aria-hidden="true" style={{
+            left: `${p.x}%`, top: `${p.y}%`,
+            width: `${p.size}px`, height: `${p.size}px`,
+            opacity: p.opacity,
+            animationDuration: `${p.dur}s`,
+            animationDelay: `${p.delay}s`,
+          }} />
+        ))}
 
-        {/* Header */}
-        <header className={styles.header}>
-          <div className={styles.logo}>
-            <span className={styles.logoDot} />
-            <span className={styles.logoText}>AXIOM</span>
-          </div>
-          <div className={styles.statusBar}>
-            <span className={styles.statusDot} style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-            <span className={styles.statusLabel} style={{ color: statusColor }}>{status}</span>
-          </div>
-          {keySaved && (
-            <button className={styles.clearBtn} onClick={clearKey} title="Reset API key">
-              RESET KEY
-            </button>
-          )}
-        </header>
-
-        {/* Orb */}
-        <div className={styles.orbSection}>
-          <div
-            className={`${styles.orb} ${isListening ? styles.orbListening : ''} ${isSpeaking ? styles.orbSpeaking : ''}`}
-            style={{ transform: `scale(${orbScale})` }}
-            aria-hidden="true"
-          >
-            <div className={styles.orbCore} />
-            <div className={styles.orbRing1} />
-            <div className={styles.orbRing2} />
-            <div className={styles.orbRing3} />
-          </div>
-        </div>
-
-        {/* API Key setup */}
-        {!keySaved && (
-          <div className={styles.keySetup}>
-            <p className={styles.keyLabel}>GROQ API KEY REQUIRED</p>
-            <p className={styles.keySub}>
-              Get your free key at{' '}
-              <a href="https://console.groq.com" target="_blank" rel="noreferrer" className={styles.link}>
-                console.groq.com
-              </a>
-            </p>
-            <div className={styles.keyRow}>
-              <input
-                type="password"
-                className={styles.keyInput}
-                value={keyInput}
-                onChange={e => setKeyInput(e.target.value)}
-                placeholder="gsk_..."
-                onKeyDown={e => e.key === 'Enter' && saveKey()}
-                autoComplete="off"
-              />
-              <button className={styles.keyBtn} onClick={saveKey}>
-                INITIALIZE
-              </button>
+        {/* ── SIDEBAR ── */}
+        <div className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ''}`}>
+          <div className={styles.sidebarInner}>
+            <div className={styles.sidebarHeader}>
+              <span className={styles.sidebarTitle}>SYSTEM CONFIG</span>
+              <button className={styles.sidebarClose} onClick={() => setSidebarOpen(false)}>✕</button>
             </div>
-          </div>
-        )}
 
-        {/* Chat log */}
-        <div className={styles.chatLog}>
-          {messages.length === 0 && keySaved && (
-            <div className={styles.emptyState}>
-              <span className={styles.emptyText}>Tap the orb and speak</span>
+            <div className={styles.sideSection}>
+              <p className={styles.sideSectionLabel}>GROQ API KEY</p>
+              <p className={styles.sideSectionSub}>Free tier at console.groq.com</p>
+              <div className={styles.sideRow}>
+                <input type="password" className={styles.sideInput} value={keyInput}
+                  onChange={e => setKeyInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && saveApiKey()}
+                  placeholder="gsk_..." autoComplete="off" />
+                <button className={styles.sideBtn} onClick={saveApiKey}>SAVE</button>
+              </div>
+              {keySaved && <p className={styles.sideOk}>● KEY ACTIVE</p>}
             </div>
-          )}
-          {messages.map((msg, i) => (
-            <div key={i} className={`${styles.message} ${styles[msg.role]}`}>
-              <span className={styles.msgRole}>{msg.role === 'user' ? 'YOU' : 'AXIOM'}</span>
-              <p className={styles.msgText}>{msg.content}</p>
+
+            <div className={styles.sideDivider} />
+
+            <div className={styles.sideSection}>
+              <p className={styles.sideSectionLabel}>VOICE</p>
+              <select className={styles.sideSelect} value={voices.indexOf(selectedVoice)}
+                onChange={e => { const v = voices[parseInt(e.target.value)]; setSelectedVoice(v); voiceRef.current = v; localStorage.setItem('axiom_voice', v.name) }}>
+                {voices.map((v, i) => <option key={i} value={i}>{v.name}</option>)}
+              </select>
+              <p className={styles.sideSectionLabel} style={{marginTop:'14px'}}>SPEECH RATE — {voiceRate.toFixed(1)}×</p>
+              <input type="range" min="0.6" max="1.6" step="0.1" value={voiceRate}
+                className={styles.sideRange}
+                onChange={e => { const v = parseFloat(e.target.value); setVoiceRate(v); voiceRateRef.current = v; localStorage.setItem('axiom_rate', v) }} />
             </div>
-          ))}
-          {isThinking && (
-            <div className={`${styles.message} ${styles.assistant}`}>
-              <span className={styles.msgRole}>AXIOM</span>
-              <div className={styles.thinking}>
-                <span /><span /><span />
+
+            <div className={styles.sideDivider} />
+
+            <div className={styles.sideSection}>
+              <p className={styles.sideSectionLabel}>CHANGE ACCESS CODE</p>
+              <div className={styles.sideRow}>
+                <input type="password" className={styles.sideInput} value={pwChangeInput}
+                  onChange={e => setPwChangeInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && savePassword()}
+                  placeholder="New code (min 4 chars)" />
+                <button className={styles.sideBtn} onClick={savePassword}>SET</button>
+              </div>
+              {pwChangeDone && <p className={styles.sideOk}>● CODE UPDATED</p>}
+            </div>
+
+            <div className={styles.sideDivider} />
+
+            <div className={styles.sideSection}>
+              <p className={styles.sideSectionLabel}>MEMORY</p>
+              <p className={styles.sideSectionSub}>Conversation history ({messages.length} messages stored)</p>
+              <button className={styles.sideDangerBtn} onClick={clearHistory}>CLEAR HISTORY</button>
+            </div>
+
+            <div className={styles.sideDivider} />
+
+            <div className={styles.sideSection}>
+              <p className={styles.sideSectionLabel}>CAPABILITIES</p>
+              <div className={styles.capList}>
+                {['General Q&A','Trip planning','Weather (live)','History & science','Fitness & health','Language & writing','Math & logic','Code help'].map(c => (
+                  <span key={c} className={styles.capTag}>{c}</span>
+                ))}
               </div>
             </div>
-          )}
-          <div ref={chatEndRef} />
+          </div>
         </div>
 
-        {/* Transcript */}
-        {transcript && (
-          <div className={styles.transcriptBar}>
-            <span className={styles.transcriptText}>{transcript}</span>
+        {sidebarOpen && <div className={styles.sidebarOverlay} onClick={() => setSidebarOpen(false)} />}
+
+        {/* ── MAIN ── */}
+        <div className={`${styles.main} ${sidebarOpen ? styles.mainShifted : ''}`}>
+
+          {/* Header */}
+          <header className={styles.header}>
+            <button className={styles.menuBtn} onClick={() => setSidebarOpen(o => !o)} aria-label="Open settings">
+              <span /><span /><span />
+            </button>
+            <div className={styles.headerCenter}>
+              <span className={styles.headerDot} />
+              <span className={styles.headerTitle}>AXIOM</span>
+            </div>
+            <div className={styles.headerStatus}>
+              <span className={styles.statusDot} style={{ background: statusColor, boxShadow: `0 0 7px ${statusColor}` }} />
+              <span className={styles.statusLabel} style={{ color: statusColor }}>{status}</span>
+            </div>
+          </header>
+
+          {/* Orb */}
+          <div className={styles.orbWrap}>
+            <div className={styles.orbAmbient} aria-hidden="true" />
+            <div
+              className={`${styles.orb} ${isListening ? styles.orbListening : ''} ${isSpeaking ? styles.orbSpeaking : ''} ${keySaved ? styles.orbClickable : ''}`}
+              style={{ transform: `scale(${orbScale})` }}
+              onClick={keySaved ? toggleConv : undefined}
+              role={keySaved ? 'button' : undefined}
+              tabIndex={keySaved ? 0 : undefined}
+              aria-label={keySaved ? (conversationMode ? 'End conversation' : 'Start conversation') : undefined}
+              onKeyDown={keySaved ? e => e.key === 'Enter' && toggleConv() : undefined}
+            >
+              <div className={styles.orbCore} />
+              <div className={styles.orbHalo} />
+              <div className={styles.orbArc1} />
+              <div className={styles.orbArc2} />
+              <div className={styles.orbArc3} />
+              <div className={styles.orbRing1} />
+              <div className={styles.orbRing2} />
+            </div>
+            <p className={styles.orbHint}>
+              {!keySaved ? 'Add API key in settings ⚙' :
+               conversationMode
+                 ? isListening ? '● LISTENING' : isSpeaking ? '◈ SPEAKING' : '◌ PROCESSING'
+                 : 'TAP TO ENGAGE'}
+            </p>
           </div>
-        )}
 
-        {/* Controls */}
-        <div className={styles.controls}>
-          <select
-            className={styles.voiceSelect}
-            onChange={e => setSelectedVoice(voices[parseInt(e.target.value)])}
-            value={voices.indexOf(selectedVoice)}
-          >
-            {voices.map((v, i) => (
-              <option key={i} value={i}>{v.name}</option>
+          {/* Chat */}
+          <div className={styles.chatLog}>
+            {messages.length === 0 && (
+              <div className={styles.emptyState}>
+                <p className={styles.emptyLine}>Ready for your command.</p>
+                <p className={styles.emptyHint}>Ask anything — travel, science, fitness, history, planning...</p>
+              </div>
+            )}
+            {messages.map((msg, i) => (
+              <div key={i} className={`${styles.message} ${styles[msg.role]}`}>
+                <span className={styles.msgRole}>{msg.role === 'user' ? 'YOU' : 'AXIOM'}</span>
+                <p className={styles.msgText}>{msg.content}</p>
+              </div>
             ))}
-          </select>
+            {isThinking && (
+              <div className={`${styles.message} ${styles.assistant}`}>
+                <span className={styles.msgRole}>AXIOM</span>
+                <div className={styles.thinking}><span /><span /><span /></div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
 
-          <button
-            className={`${styles.micBtn} ${isListening ? styles.micActive : ''}`}
-            onClick={toggleListening}
-            aria-label={isListening ? 'Stop listening' : 'Start listening'}
-            disabled={!keySaved || isThinking}
-          >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              {isListening ? (
-                <>
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
-                </>
-              ) : (
-                <>
-                  <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <line x1="12" y1="19" x2="12" y2="22" />
-                </>
-              )}
-            </svg>
-          </button>
+          {/* Transcript */}
+          {transcript && (
+            <div className={styles.transcriptBar}>
+              <span className={styles.transcriptDot} />
+              <span className={styles.transcriptText}>{transcript}</span>
+            </div>
+          )}
 
-          <button
-            className={styles.stopBtn}
-            onClick={() => { window.speechSynthesis.cancel(); setIsSpeaking(false); setStatus('STANDBY'); animateOrb(false) }}
-            aria-label="Stop speaking"
-            title="Stop speaking"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="4" y="4" width="16" height="16" rx="2" />
-            </svg>
-          </button>
+          {/* Controls */}
+          <div className={styles.controls}>
+            <button
+              className={`${styles.micBtn} ${conversationMode ? styles.micActive : ''}`}
+              onClick={keySaved ? toggleConv : undefined}
+              disabled={!keySaved}
+              aria-label={conversationMode ? 'End conversation' : 'Start conversation'}
+            >
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                {conversationMode
+                  ? <rect x="6" y="6" width="12" height="12" rx="2" />
+                  : <><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></>}
+              </svg>
+              <span className={styles.micLabel}>{conversationMode ? 'END' : 'SPEAK'}</span>
+            </button>
+            <button className={styles.interruptBtn}
+              onClick={() => {
+                window.speechSynthesis.cancel(); setIsSpeaking(false); speakingRef.current = false; animateOrb(false)
+                if (convRef.current) setTimeout(() => startListening(), 200)
+                else setStatus('STANDBY')
+              }}
+              title="Interrupt AXIOM"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg>
+            </button>
+          </div>
+
         </div>
       </div>
     </>
