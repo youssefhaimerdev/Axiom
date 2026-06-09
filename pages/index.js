@@ -219,7 +219,7 @@ export default function Home() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-groq-key': apiKeyRef.current },
-        body: JSON.stringify({ messages: [...messagesRef.current, userMsg].slice(-16), weatherData }),
+        body: JSON.stringify({ messages: [...messagesRef.current, userMsg].slice(-4).map(m => ({ role: m.role, content: (m.content || "").slice(0, 300) })), weatherData }),
       })
       const data = await res.json()
       setIsThinking(false); thinkingRef.current = false
