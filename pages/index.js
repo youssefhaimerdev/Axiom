@@ -190,8 +190,17 @@ export default function Home() {
   }, [animateOrb])
 
   const detectWeather = (text) => {
-    const m = text.match(/weather\s+(?:in\s+|for\s+|at\s+)?([a-zA-Z\s,]+?)(?:\?|$)/i)
-    return m ? m[1].trim() : null
+    // Match: "weather in X", "what's the weather in X", "how's the weather in X", "temperature in X", etc.
+    const patterns = [
+      /(?:weather|temperature|forecast|how(?:'s| is) it)\s+(?:like\s+)?(?:in|at|for)\s+([a-zA-Z][a-zA-Z\s,]{1,35?)(?:\?|$)/i,
+      /(?:in|at|for)\s+([a-zA-Z][a-zA-Z\s,]{1,35?)\s+(?:weather|temperature|forecast)/i,
+      /weather[^?]*?(?:in|at|for)\s+([a-zA-Z][a-zA-Z\s,]{1,35?)(?:\?|$)/i,
+    ]
+    for (const p of patterns) {
+      const m = text.match(p)
+      if (m) return m[1].trim()
+    }
+    return null
   }
 
   const sendMessage = useCallback(async (text) => {

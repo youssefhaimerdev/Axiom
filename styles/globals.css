@@ -44,3 +44,8 @@ html, body { height: 100%; background: var(--bg-void); color: var(--text-primary
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--cyan-dim); }
+
+/* Mobile touch polish */
+button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+input, select { -webkit-tap-highlight-color: transparent; }
+* { -webkit-overflow-scrolling: touch; }
