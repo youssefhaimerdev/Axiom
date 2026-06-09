@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-void: #040608;
+  --bg-deep: #080c10;
+  --bg-surface: #0d1318;
+  --bg-elevated: #111820;
+  --bg-panel: #141d26;
+
+  --cyan: #00e5ff;
+  --cyan-dim: #00b8cc;
+  --cyan-ghost: rgba(0, 229, 255, 0.08);
+  --cyan-glow: rgba(0, 229, 255, 0.15);
+  --cyan-border: rgba(0, 229, 255, 0.2);
+
+  --amber: #ffb300;
+  --amber-ghost: rgba(255, 179, 0, 0.08);
+
+  --text-primary: #e8f4f8;
+  --text-secondary: #7a9aaa;
+  --text-muted: #3d5566;
+  --text-accent: #00e5ff;
+
+  --border-subtle: rgba(255, 255, 255, 0.04);
+  --border-dim: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(0, 229, 255, 0.2);
+
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#__next {
+  height: 100%;
+}
+
+::selection {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-dim);
+}
