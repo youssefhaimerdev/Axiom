@@ -263,7 +263,8 @@ export default function Home() {
         return
       }
       const reply = data.reply
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }])
+      const label = data.usedSearch ? '🔍 ' : data.searchError ? '⚠️ ' : ''
+      setMessages(prev => [...prev, { role: 'assistant', content: reply, searched: !!data.usedSearch, searchError: data.searchError }])
       speak(reply, () => { setStatus('STANDBY'); if (convRef.current) setTimeout(() => startListening(), 350) })
     } catch {
       setIsThinking(false); thinkingRef.current = false; setStatus('CONNECTION LOST')
@@ -504,7 +505,11 @@ export default function Home() {
             )}
             {messages.map((msg, i) => (
               <div key={i} className={`${styles.message} ${styles[msg.role]}`}>
-                <span className={styles.msgRole}>{msg.role === 'user' ? 'YOU' : 'AXIOM'}</span>
+                <span className={styles.msgRole}>
+                {msg.role === 'user' ? 'YOU' : 'AXIOM'}
+                {msg.searched && <span className={styles.searchBadge}>● LIVE</span>}
+                {msg.searchError && <span className={styles.errorBadge}>⚠ SEARCH FAILED</span>}
+              </span>
                 <p className={styles.msgText}>{msg.content}</p>
               </div>
             ))}

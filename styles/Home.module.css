@@ -510,3 +510,18 @@
   .chatLog { gap: 8px; }
   .msgText { font-size: 13px; padding: 8px 12px; }
 }
+
+.searchBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .15em;
+  color: var(--green);
+  margin-left: 8px;
+}
+.errorBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: var(--amber);
+  margin-left: 8px;
+}
