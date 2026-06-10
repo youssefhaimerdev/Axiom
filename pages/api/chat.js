@@ -33,7 +33,7 @@ export default async function handler(req, res) {
           ],
           max_completion_tokens: 3000,
           temperature: 0.7,
-          citation_options: { mode: 'disabled' },
+          citation_options: 'disabled',
         }),
       })
 
