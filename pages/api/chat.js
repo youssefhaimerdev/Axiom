@@ -8,72 +8,57 @@ export default async function handler(req, res) {
   const lastUserMsg = (messages[messages.length - 1]?.content || '').trim()
   const lastUserLower = lastUserMsg.toLowerCase()
 
-  const needsSearch = /\b(weather|forecast|news|today|tonight|right now|currently|live|score|standings|stock|price|net worth|richer|richest|wealthiest|who won|who is winning|latest|breaking|just happened|this week|this year|how much is|worth|billion|million|elon|musk|trump|kardashian|hamilton|bitcoin|crypto|2025|2026)\b/.test(lastUserLower)
+  const needsSearch = /\b(weather|forecast|news|today|tonight|right now|currently|live|score|standings|stock|price|net worth|richer|richest|wealthiest|who won|who is winning|latest|breaking|just happened|this week|this year|how much is|worth|billion|million|bitcoin|crypto|2025|2026)\b/.test(lastUserLower)
 
   const weatherBlock = weatherData ? `\nLIVE WEATHER DATA (use this): ${weatherData}` : ''
 
-  const systemPrompt = `You are AXIOM — a sharp, witty, slightly formal personal AI assistant. Every response is spoken aloud:
-- Zero markdown. No bullets, no numbered lists, no asterisks, no headers. Ever.
-- Natural flowing prose, like an exceptionally knowledgeable friend speaking to you.
-- Match length to complexity: simple fact = 1-2 sentences. Detailed plan = several rich sentences.
-- CRITICAL: Never pretend to search the internet or claim to have done research if you have not. If you don't have current data, say clearly: "I don't have real-time access to that, but as of my last knowledge..." 
-- Confident, precise, occasionally witty.
-- Current date/time: ${new Date().toLocaleString()}${weatherBlock}`
+  let searchSnippet = ''
+  let searchWorked = false
 
   if (needsSearch) {
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'groq/compound-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: lastUserMsg }
-          ],
-          max_completion_tokens: 3000,
-          temperature: 0.7,
-          citation_options: 'disabled',
-        }),
+      // Jina AI reader: fetches + cleans any URL for free, no key needed
+      // We point it at a DuckDuckGo search results page
+      const query = encodeURIComponent(lastUserMsg)
+      const searchUrl = `https://html.duckduckgo.com/html/?q=${query}`
+      const jinaUrl = `https://r.jina.ai/${searchUrl}`
+
+      const jinaRes = await fetch(jinaUrl, {
+        headers: {
+          'Accept': 'text/plain',
+          'X-Return-Format': 'text',
+        },
+        signal: AbortSignal.timeout(8000),
       })
 
-      const data = await response.json()
+      if (jinaRes.ok) {
+        const text = await jinaRes.text()
+        // Extract first meaningful chunk — DDG results are in the first ~2000 chars
+        const cleaned = text
+          .replace(/\[.*?\]/g, '')
+          .replace(/https?:\/\/\S+/g, '')
+          .replace(/\s{3,}/g, ' ')
+          .trim()
+          .slice(0, 1200)
 
-      if (data.error) {
-        // Return the actual error so we can see it in the UI
-        return res.status(200).json({ 
-          reply: `Search error: ${data.error.message}. Answering from training data instead — I cannot access real-time information right now.`,
-          searchError: data.error.message 
-        })
+        if (cleaned.length > 100) {
+          searchSnippet = cleaned
+          searchWorked = true
+        }
       }
-
-      const msg = data.choices[0].message
-      
-      // Check if it actually used a search tool
-      const usedSearch = msg.executed_tools?.length > 0
-      
-      const raw = msg.content || ''
-      const reply = raw
-        .replace(/\【.*?\】/g, '')
-        .replace(/\[Source:.*?\]/gi, '')
-        .replace(/\*\*/g, '')
-        .replace(/\*/g, '')
-        .replace(/#{1,6}\s/g, '')
-        .replace(/\n+/g, ' ')
-        .trim()
-        .slice(0, 600)
-
-      return res.status(200).json({ reply, usedSearch })
-
     } catch (err) {
-      return res.status(200).json({ 
-        reply: `I couldn't reach the search service right now. As of my training data: ${lastUserMsg} — but I can't confirm current figures.`,
-        searchError: err.message 
-      })
+      // Jina failed — will answer from training data
     }
   }
 
-  // Regular query — fast llama
+  const systemPrompt = `You are AXIOM — a sharp, witty, slightly formal personal AI assistant. Every response is spoken aloud:
+- Zero markdown. No bullets, no numbered lists, no asterisks, no headers. Ever.
+- Natural flowing prose like a knowledgeable friend speaking to you.
+- Match length to complexity: simple fact = 1-2 sentences. Detailed plan = several rich sentences.
+- NEVER claim to have searched the internet unless search data is explicitly provided to you below.
+- If no search data is provided for a time-sensitive question, say clearly you don't have real-time access and give your best answer from training data.
+- Current date/time: ${new Date().toLocaleString()}${weatherBlock}${searchSnippet ? `\n\nLIVE SEARCH RESULTS (use this to answer accurately, speak naturally, no citations):\n${searchSnippet}` : ''}`
+
   const trimmedMessages = messages.slice(-6).map(m => ({
     role: m.role,
     content: (m.content || '').slice(0, 600)
@@ -90,10 +75,13 @@ export default async function handler(req, res) {
         temperature: 0.7,
       }),
     })
+
     const data = await response.json()
     if (data.error) return res.status(400).json({ error: data.error.message })
+
     const reply = data.choices[0].message.content.trim().slice(0, 600)
-    return res.status(200).json({ reply })
+    return res.status(200).json({ reply, usedSearch: searchWorked })
+
   } catch (err) {
     return res.status(500).json({ error: 'Failed to reach Groq API' })
   }
