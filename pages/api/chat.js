@@ -12,9 +12,13 @@ export default async function handler(req, res) {
 
   const weatherBlock = weatherData ? `\nLIVE WEATHER DATA (use this): ${weatherData}` : ''
 
-  const systemPrompt = `You are AXIOM, a voice assistant. Spoken responses only — no markdown, no bullets, no numbering, no asterisks. Pure natural sentences.
-Answer length is proportional to complexity: one sentence for simple facts, several full sentences for plans or explanations. Never truncate a useful answer, never pad a simple one.
-Date/time: ${new Date().toLocaleString()}${weatherBlock}`
+  const systemPrompt = `You are AXIOM — a sharp, witty, slightly formal personal AI assistant. Every response is spoken aloud, so follow these rules absolutely:
+- Zero markdown. No bullet points, no numbered lists, no asterisks, no headers. Ever.
+- Write in flowing natural prose, like an exceptionally knowledgeable friend speaking to you.
+- Match length to complexity: a simple fact = 1 tight sentence. A workout plan, trip itinerary, or explanation = multiple rich sentences covering everything needed. Never pad, never cut useful detail short.
+- When giving plans or structured advice, weave it into natural speech: "Start with X, then move to Y, and finish with Z" — not a list.
+- Be confident, precise, occasionally witty. You are the most capable assistant the user has ever spoken to.
+- Current date/time: ${new Date().toLocaleString()}${weatherBlock}`
 
   // Send only the last user message for search queries (avoids entity too large)
   // For normal queries keep last 5 for context
@@ -23,7 +27,7 @@ Date/time: ${new Date().toLocaleString()}${weatherBlock}`
     : messages.slice(-5).map(m => ({ role: m.role, content: (m.content || '').slice(0, 800) }))
 
   const model = needsSearch ? 'compound-beta' : 'llama-3.3-70b-versatile'
-  const maxTokens = needsSearch ? 120 : 350
+  const maxTokens = needsSearch ? 130 : 450
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {

@@ -139,23 +139,43 @@ export default function Home() {
     finalRef.current = ''
     setTranscript('')
     clearSilence()
+
+    // Detect mobile — iOS/Android need different recognition strategy
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+
     const r = new SR()
-    r.continuous = true; r.interimResults = true; r.lang = 'en-US'; r._active = true
+    // On mobile: non-continuous avoids the duplicate-words bug caused by
+    // the browser re-firing previous results on each onresult event.
+    // On desktop: continuous gives smoother real-time transcript.
+    r.continuous = !isMobile
+    r.interimResults = true
+    r.lang = 'en-US'
+    r._active = true
+    r._processedIndex = -1  // track last processed result index to prevent duplicates
 
     r.onresult = (e) => {
       if (speakingRef.current) {
         window.speechSynthesis.cancel()
         speakingRef.current = false; setIsSpeaking(false); animateOrb(false)
       }
-      let interim = '', final = finalRef.current
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript + ' '
-        else interim += e.results[i][0].transcript
+
+      let interim = ''
+      // Only process results we haven't seen yet
+      const startFrom = Math.max(e.resultIndex, r._processedIndex + 1)
+      for (let i = startFrom; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          // Append only this new final chunk, never re-append old ones
+          finalRef.current += e.results[i][0].transcript + ' '
+          r._processedIndex = i
+        } else {
+          interim += e.results[i][0].transcript
+        }
       }
-      finalRef.current = final
-      setTranscript(final + interim)
+
+      setTranscript(finalRef.current + interim)
       clearSilence()
-      if (final.trim() || interim.trim()) {
+
+      if (finalRef.current.trim() || interim.trim()) {
         silenceTimerRef.current = setTimeout(() => {
           const text = finalRef.current.trim()
           if (text && sendRef.current) {
@@ -166,8 +186,21 @@ export default function Home() {
         }, SILENCE_DELAY)
       }
     }
-    r.onerror = (e) => { if (e.error === 'no-speech' || e.error === 'aborted') return; setStatus('MIC ERROR'); r._active = false; setIsListening(false); listeningRef.current = false }
-    r.onend = () => { if (r._active && convRef.current) { try { r.start() } catch {} } }
+
+    r.onerror = (e) => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return
+      setStatus('MIC ERROR'); r._active = false; setIsListening(false); listeningRef.current = false
+    }
+
+    r.onend = () => {
+      // On mobile non-continuous mode: restart after each utterance to keep listening
+      // On desktop continuous mode: restart only if unexpectedly stopped
+      if (r._active && convRef.current) {
+        // Small delay on mobile to avoid rapid restart loop
+        setTimeout(() => { try { r.start() } catch {} }, isMobile ? 300 : 0)
+      }
+    }
+
     recognitionRef.current = r
     try { r.start(); setIsListening(true); listeningRef.current = true; setStatus('LISTENING') } catch { setStatus('MIC ERROR') }
   }, [animateOrb])
